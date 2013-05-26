@@ -834,6 +834,8 @@ sub dump_object {
         },
       };
 
+      return $_ unless defined $_;
+
       my $subsre = join( '|', keys %$subs ); 
       $_ =~ s{__($subsre)(?:\((.+?)\))?__}{ $subs->{ $1 }->( $self, $2 ? split( /,/, $2 ) : () ) }eg;
 
@@ -856,6 +858,15 @@ sub dump_object {
   my @pk_vals = map {
     $object->get_column($_) 
   } $object->primary_columns;
+
+  if (ref($set->{substitute}) eq "HASH" ) {
+    while ( my ($key,$val) = each(%{$set->{substitute}})) {
+        if ($val) {
+    		$val = \"$val" if ( $val =~ s/^\\// );
+        }
+		$object->$key($val);
+    }
+  }
 
   my $key = join("\0", @pk_vals);
 
