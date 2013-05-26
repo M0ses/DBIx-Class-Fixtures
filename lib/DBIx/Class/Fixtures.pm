@@ -24,7 +24,8 @@ use base qw(Class::Accessor::Grouped);
 our $namespace_counter = 0;
 
 __PACKAGE__->mk_group_accessors( 'simple' => qw/config_dir
-    _inherited_attributes debug schema_class dumped_objects config_attrs/);
+    _inherited_attributes debug schema_class dumped_objects config_attrs
+    _all_tables/);
 
 our $VERSION = '1.001018';
 
@@ -511,6 +512,7 @@ sub new {
               ignore_sql_errors => $params->{ignore_sql_errors},
               dumped_objects => {},
               use_create => $params->{use_create} || 0,
+              _all_tables=>$params->{_all_tables} || {},
               config_attrs => $params->{config_attrs} || {},
   };
 
@@ -704,7 +706,14 @@ sub dump {
     $self->dump_rs($rs, \%source_options );
   }
 
-
+  # dump set in one file if file_per_set is 1
+  #
+  if ($config->{file_per_set}) {
+    my $dds = Data::Dump::Streamer->new();
+    my $file=file($tmp_output_dir,'data_set.fix');
+    my $serialized = $dds->Dump($self->_all_tables)->Out();
+    $file->openw->print($serialized);
+  }
   # clear existing output dir
   if ( $output_dir ne $tmp_output_dir ) { 
           foreach my $child ($output_dir->children) {
@@ -729,6 +738,7 @@ sub dump {
         }
 
     }
+  $self->_all_tables({});  
   $self->msg("done");
 
   return 1;
@@ -850,16 +860,16 @@ sub dump_object {
 
   # write dir and gen filename
   my $source_dir = $params->{set_dir}->subdir(lc $src->from);
-  $source_dir->mkpath(0, 0777);
+  if (! $set->{file_per_set}) {
+    $source_dir->mkpath(0, 0777);
+  }
 
   # strip dir separators from file name
-  my $file = $source_dir->file(
-      join('-', map { s|[/\\]|_|g; $_; } @pk_vals) . '.fix'
-  );
+  my $record_id = join('-', map { s|[/\\]|_|g; $_; } @pk_vals);
 
   # write file
   unless ($exists) {
-    $self->msg('-- dumping ' . $file->stringify, 2);
+    $self->msg('-- dumping ' . $record_id, 2);
     my %ds = $object->get_columns;
 
     if($set->{external}) {
@@ -909,8 +919,13 @@ sub dump_object {
     }
 
     # do the actual dumping
-    my $serialized = Dump(\%ds)->Out();
-    $file->openw->print($serialized);
+    if (! $set->{file_per_set} ) { 
+        my $file = $source_dir->file($record_id.'.fix');
+        my $serialized = Dump(\%ds)->Out();
+       $file->openw->print($serialized);
+    } else {   
+        $self->_all_tables->{$src->from}->{$record_id} = \%ds;
+    }        
   }
 
   # don't bother looking at rels unless we are actually planning to dump at least one type
@@ -1322,7 +1337,6 @@ sub populate {
   );
 
   if (! $config_set->{skip_data_visitor} ) {
-    $self->msg($config_set,9);
     $self->msg("  - using data visitor for config_set",9);
     $v->visit( $config_set );
   } else {
@@ -1345,11 +1359,18 @@ sub populate {
           }
           $self->msg("- creating temp dir : ".$tmp_fixture_dir);
           $tmp_fixture_dir->mkpath();
-          for ( map { $schema->source($_)->from } $schema->sources) {
-            my $from_dir = $fixture_dir->subdir($_);
-            next unless -e $from_dir;
-            dircopy($from_dir, $tmp_fixture_dir->subdir($_) );
-          }
+          if (! $config_set->{file_per_set} ) {
+              for ( map { $schema->source($_)->from } $schema->sources) {
+                my $from_dir = $fixture_dir->subdir($_);
+                next unless -e $from_dir;
+                dircopy($from_dir, $tmp_fixture_dir->subdir($_) );
+              }
+          } else {
+              my $from = $fixture_dir->file('data_set.fix');
+              my $to = $tmp_fixture_dir->file('data_set.fix');
+              $self->msg("from $from -> to $to",9);
+              File::Copy::copy($from,$to);
+          }        
   }
 
   unless (-d $tmp_fixture_dir) {
@@ -1373,25 +1394,27 @@ sub populate {
     $fixup_visitor = new Data::Visitor::Callback(%callbacks);
   }
 
+  my $in_data = $self->_get_data_from_files($tmp_fixture_dir,$config_set,$schema);
+
   $schema->storage->txn_do(sub {
     $schema->storage->with_deferred_fk_checks(sub {
       foreach my $source (sort $schema->sources) {
         $self->msg("- adding " . $source);
+
         my $rs = $schema->resultset($source);
-        my $source_dir = $tmp_fixture_dir->subdir( lc $rs->result_source->from );
-        next unless (-e $source_dir);
+        next unless ($in_data->{$source});
         my @rows;
-        while (my $file = $source_dir->next) {
-          next unless ($file =~ /\.fix$/);
-          next if $file->is_dir;
-          my $contents = $file->slurp;
-          my $HASH1;
-          eval($contents);
+        foreach my $key (keys(%{$in_data->{$source}})) {
+          $self->msg("  - using pk ".$key,9);
+
+          my $HASH1 = $in_data->{$source}->{$key};
+
           if ( ! $sets_by_src{$source}->{skip_data_visitor} ) {
             $HASH1 = $fixup_visitor->visit($HASH1) if $fixup_visitor;
           } else {
             $self->msg("  - skipping data visitor by set",9);
           }
+
           if(my $external = delete $HASH1->{external}) {
             my @fields = keys %{$sets_by_src{$source}->{external}};
             foreach my $field(@fields) {
@@ -1448,6 +1471,49 @@ sub populate {
   return 1;
 }
 
+sub _get_data_from_files {
+    my ($self,$tmp_fixture_dir,$config_set,$schema)=@_;
+    my $result;
+    if ($config_set->{file_per_set}) {
+        my $HASH1;
+        $self->msg("   - using file per set",7);
+        my $in_file = $tmp_fixture_dir->file("data_set.fix");
+        ( -e $in_file ) || $self->msg("   - file does not exists : ".$in_file,7);
+        my $fc = $in_file->slurp;
+        eval $fc;
+        foreach my $source (sort $schema->sources) {
+            my $table = $schema->source($source)->from;
+            if ($HASH1->{$table}) {
+                    $HASH1->{$source} = $HASH1->{$table};
+                    delete $HASH1->{$table};
+            }       
+        }
+        $result = $HASH1;
+    } else {
+      foreach my $source (sort $schema->sources) {
+              
+        $self->msg("- adding " . $source);
+        my $rs = $schema->resultset($source);
+        my $source_dir = $tmp_fixture_dir->subdir( lc $rs->result_source->from );
+        next unless (-e $source_dir);
+        $result->{$source} = {} unless ( ref($result->{$source}) eq 'HASH' );
+        while (my $file = $source_dir->next) {
+          next unless ($file =~ /\.fix$/);
+          my $key = $file->basename;
+          $key =~ s/\.fix//;
+          $self->msg("  - using file ".$file,9);
+          next if $file->is_dir;
+          my $contents = $file->slurp;
+          my $HASH1;
+          eval($contents);
+          %{$result->{$source}} = (%{$result->{$source}},$key=>$HASH1);
+        }  
+        $self->msg("   - using file per record",9);
+      }  
+    }
+    return $result;
+}        
+
 sub do_post_ddl {
   my ($self, $params) = @_;
 
@@ -1465,10 +1531,13 @@ sub msg {
   my $subject = shift || return;
   my $level = shift || 1;
   return unless $self->debug >= $level;
+  # usefull for debugging 
+  #my $c1 = join(' ',caller()). " ::";
+  my $c1='';
   if (ref $subject) {
-	print Dumper($subject);
+	print $c1.Dumper($subject);
   } else {
-	print $subject . "\n";
+	print $c1.$subject . "\n";
   }
 }
 
