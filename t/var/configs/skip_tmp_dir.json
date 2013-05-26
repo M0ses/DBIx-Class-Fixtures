@@ -1,0 +1,13 @@
+{
+        "might_have": {
+            "fetch": 0
+        },
+        "has_many": {
+            "fetch": 0
+        },
+        "skip_tmp_dir" : 1,
+        "sets": [{
+            "class": "Artist",
+            "quantity": "all"
+        }]
+}

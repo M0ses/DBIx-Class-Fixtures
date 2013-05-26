@@ -626,9 +626,8 @@ sub dump {
     $output_dir->mkpath ||
     DBIx::Class::Exception->throw("output directory does not exist at $output_dir");
   }
-
   $self->msg("generating  fixtures");
-  my $tmp_output_dir = dir($output_dir, '-~dump~-' . $<);
+  my $tmp_output_dir = ($config->{skip_tmp_dir}) ? $output_dir : dir($output_dir, '-~dump~-' . $<);
 
   if (-e $tmp_output_dir) {
     $self->msg("- clearing existing $tmp_output_dir");
@@ -705,28 +704,31 @@ sub dump {
     $self->dump_rs($rs, \%source_options );
   }
 
+
   # clear existing output dir
-  foreach my $child ($output_dir->children) {
-    if ($child->is_dir) {
-      next if ($child eq $tmp_output_dir);
-      if (grep { $_ =~ /\.fix/ } $child->children) {
-        $child->rmtree;
-      }
-    } elsif ($child =~ /_dumper_version$/) {
-      $child->remove;
+  if ( $output_dir ne $tmp_output_dir ) { 
+          foreach my $child ($output_dir->children) {
+            if ($child->is_dir) {
+              next if ($child eq $tmp_output_dir);
+              if (grep { $_ =~ /\.fix/ } $child->children) {
+                $child->rmtree;
+              }
+            } elsif ($child =~ /_dumper_version$/) {
+              $child->remove;
+            }
+          }
+
+          $self->msg("- moving temp dir to $output_dir");
+          move($_, dir($output_dir, $_->relative($_->parent)->stringify)) 
+            for $tmp_output_dir->children;
+
+          if (-e $output_dir) {
+            $self->msg("- clearing tmp dir $tmp_output_dir");
+            # delete existing fixture set
+            $tmp_output_dir->remove;
+        }
+
     }
-  }
-
-  $self->msg("- moving temp dir to $output_dir");
-  move($_, dir($output_dir, $_->relative($_->parent)->stringify)) 
-    for $tmp_output_dir->children;
-
-  if (-e $output_dir) {
-    $self->msg("- clearing tmp dir $tmp_output_dir");
-    # delete existing fixture set
-    $tmp_output_dir->remove;
-  }
-
   $self->msg("done");
 
   return 1;
@@ -1270,10 +1272,12 @@ sub populate {
   return 1 if $params->{no_populate}; 
   
   $self->msg("\nimporting fixtures");
-  my $tmp_fixture_dir = dir($fixture_dir, "-~populate~-" . $<);
   my $version_file = file($fixture_dir, '_dumper_version');
   my $config_set_path = file($fixture_dir, '_config_set');
-  my $config_set = -e $config_set_path ? do { my $VAR1; eval($config_set_path->slurp); $VAR1 } : '';
+  # TODO: check if this bugfix is needed at all
+  my $config_set = -e $config_set_path ? do { my $VAR1; eval($config_set_path->slurp); $VAR1 } : {};
+
+  my $tmp_fixture_dir = ($config_set->{skip_tmp_dir}) ? $fixture_dir  : dir($fixture_dir, "-~populate~-" . $<);
 
   my $v = Data::Visitor::Callback->new(
     plain_value => sub {
@@ -1323,17 +1327,18 @@ sub populate {
 
 #  DBIx::Class::Exception->throw('no version file found');
 #    unless -e $version_file;
-
-  if (-e $tmp_fixture_dir) {
-    $self->msg("- deleting existing temp directory $tmp_fixture_dir");
-    $tmp_fixture_dir->rmtree;
-  }
-  $self->msg("- creating temp dir");
-  $tmp_fixture_dir->mkpath();
-  for ( map { $schema->source($_)->from } $schema->sources) {
-    my $from_dir = $fixture_dir->subdir($_);
-    next unless -e $from_dir;
-    dircopy($from_dir, $tmp_fixture_dir->subdir($_) );
+  if ($fixture_dir ne $tmp_fixture_dir ) { 
+          if (-e $tmp_fixture_dir) {
+            $self->msg("- deleting existing temp directory $tmp_fixture_dir");
+            $tmp_fixture_dir->rmtree;
+          }
+          $self->msg("- creating temp dir : ".$tmp_fixture_dir);
+          $tmp_fixture_dir->mkpath();
+          for ( map { $schema->source($_)->from } $schema->sources) {
+            my $from_dir = $fixture_dir->subdir($_);
+            next unless -e $from_dir;
+            dircopy($from_dir, $tmp_fixture_dir->subdir($_) );
+          }
   }
 
   unless (-d $tmp_fixture_dir) {
@@ -1420,8 +1425,11 @@ sub populate {
   } ) if $params->{post_ddl};
 
   $self->msg("- fixtures imported");
-  $self->msg("- cleaning up");
-  $tmp_fixture_dir->rmtree;
+  if ($fixture_dir ne $tmp_fixture_dir ) {
+    $self->msg("- cleaning up");
+    $self->msg(" - removing dir: ".$tmp_fixture_dir,7);
+    $tmp_fixture_dir->rmtree;
+  };  
   return 1;
 }
 
