@@ -710,8 +710,13 @@ sub dump {
   #
   if ($config->{file_per_set}) {
     my $dds = Data::Dump::Streamer->new();
-    my $file=file($tmp_output_dir,'data_set.fix');
+    if (exists($config->{dump_indent})) {
+      $self->msg(" - setting indent to ".$config->{dump_indent},2);
+      $dds->Indent($config->{dump_indent});
+    }      
     my $serialized = $dds->Dump($self->_all_tables)->Out();
+    my $file=file($tmp_output_dir,'data_set.fix');
+    $self->msg(" - writing data to file:  ".$file,2);
     $file->openw->print($serialized);
   }
   # clear existing output dir

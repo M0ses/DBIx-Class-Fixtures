@@ -1,0 +1,14 @@
+{
+        "might_have": {
+            "fetch": 0
+        },
+        "has_many": {
+            "fetch": 0
+        },
+        "file_per_set" : 1,
+        "dump_indent" : 0,
+        "sets": [{
+            "class": "Artist",
+            "quantity": "all"
+        }]
+}
