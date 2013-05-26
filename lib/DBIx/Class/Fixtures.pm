@@ -25,7 +25,7 @@ our $namespace_counter = 0;
 
 __PACKAGE__->mk_group_accessors( 'simple' => qw/config_dir
     _inherited_attributes debug schema_class dumped_objects config_attrs
-    _all_tables/);
+    _all_tables _pk_autoincrement/);
 
 our $VERSION = '1.001018';
 
@@ -512,8 +512,9 @@ sub new {
               ignore_sql_errors => $params->{ignore_sql_errors},
               dumped_objects => {},
               use_create => $params->{use_create} || 0,
-              _all_tables=>$params->{_all_tables} || {},
               config_attrs => $params->{config_attrs} || {},
+              _all_tables=>{},
+              _pk_autoincrement=>{},
   };
 
   bless $self, $class;
@@ -854,9 +855,17 @@ sub dump_object {
   die 'no object passed to dump_object' unless $object;
 
   my @inherited_attrs = @{$self->_inherited_attributes};
-
+  my $src = $object->result_source;
   my @pk_vals = map {
-    $object->get_column($_) 
+     if ( $set->{pk_autoincrement} && $object->column_info($_)->{is_auto_increment} ) {
+        my $record_id = $self->_pk_autoincrement->{$src->name} || 0;
+        $record_id++;
+        $self->_pk_autoincrement->{$src->name} = $record_id;
+        $object->$_(undef);
+        $record_id;
+     } else {
+        $object->get_column($_)
+     }
   } $object->primary_columns;
 
   if (ref($set->{substitute}) eq "HASH" ) {
@@ -870,7 +879,6 @@ sub dump_object {
 
   my $key = join("\0", @pk_vals);
 
-  my $src = $object->result_source;
   my $exists = $self->dumped_objects->{$src->name}{$key}++;
 
 
