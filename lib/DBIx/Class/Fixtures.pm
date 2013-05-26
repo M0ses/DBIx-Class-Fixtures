@@ -826,7 +826,12 @@ sub dump_object {
     }
   );
   
-  $v->visit( $set );
+  if (! $set->{skip_data_visitor} ) {
+    $self->msg("  - using data visitor",9);
+    $v->visit( $set );
+  } else {
+    $self->msg("  - skipping data visitor",9);
+  }
 
   die 'no dir passed to dump_object' unless $params->{set_dir};
   die 'no object passed to dump_object' unless $object;
@@ -1315,8 +1320,14 @@ sub populate {
       return $_;
     }
   );
-  
-  $v->visit( $config_set );
+
+  if (! $config_set->{skip_data_visitor} ) {
+    $self->msg($config_set,9);
+    $self->msg("  - using data visitor for config_set",9);
+    $v->visit( $config_set );
+  } else {
+    $self->msg("  - skipping data visitor for config_set",9);
+  }
 
 
   my %sets_by_src;
@@ -1376,7 +1387,11 @@ sub populate {
           my $contents = $file->slurp;
           my $HASH1;
           eval($contents);
-          $HASH1 = $fixup_visitor->visit($HASH1) if $fixup_visitor;
+          if ( ! $sets_by_src{$source}->{skip_data_visitor} ) {
+            $HASH1 = $fixup_visitor->visit($HASH1) if $fixup_visitor;
+          } else {
+            $self->msg("  - skipping data visitor by set",9);
+          }
           if(my $external = delete $HASH1->{external}) {
             my @fields = keys %{$sets_by_src{$source}->{external}};
             foreach my $field(@fields) {

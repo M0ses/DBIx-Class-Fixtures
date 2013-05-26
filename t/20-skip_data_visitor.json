@@ -1,0 +1,59 @@
+use DBIx::Class::Fixtures;
+use Test::More;
+use File::Path 'rmtree';
+
+use lib qw(t/lib);
+use DBICTest;
+
+my $fixtures;
+my $schema;
+my $fix_dir= "t/var/fixtures/skip_data_visitor";
+
+{
+  my ($out,$err);
+  local *STDOUT;
+  open(STDOUT,">", \$out);
+  local *STDERR;
+  open(STDERR,">", \$err);
+
+  ok($schema = DBICTest->init_schema(), 'got schema');
+  $fixtures = DBIx::Class::Fixtures
+    ->new({
+      config_dir => 't/var/configs',
+      debug => 9 }
+  );
+}
+
+{
+  my $got='';
+  my ($out,$err);
+  local *STDOUT;
+  open(STDOUT,">", \$got);
+  $fixtures->dump({
+    config => 'skip_data_visitor.json',
+    schema => $schema,
+    directory => $fix_dir
+  });
+  like($got,qr/- skipping data visitor\n/,"checking for skip of data visitor while dump");
+};
+
+{
+    my $got='';
+  my ($out,$err);
+    local *STDOUT;
+    open(STDOUT,">", \$got);
+    $fixtures->populate({
+        ddl => 't/lib/sqlite.sql',
+        connection_details => ['dbi:SQLite:t/var/DBIxClass.db', '', ''],
+        directory => $fix_dir
+    });
+    like($got,qr/- skipping data visitor for config_set\n/,"checking for skip of data visitor on config_set base");
+    like($got,qr/- skipping data visitor by set\n/,"checking for skip of data visitor on base of sets");
+}
+
+
+done_testing;
+
+END {
+    rmtree $fix_dir;
+}
