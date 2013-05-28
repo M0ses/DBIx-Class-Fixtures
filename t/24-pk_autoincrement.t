@@ -8,7 +8,7 @@ use Data::Dumper;
 
 my $fixtures;
 my $schema;
-my $fix_dir= "t/var/fixtures/substitute";
+my $fix_dir= "t/var/fixtures/pk_autoincrement";
 
 my $expected = { artist => {
                 1 => {
