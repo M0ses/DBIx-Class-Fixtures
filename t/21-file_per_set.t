@@ -2,6 +2,7 @@ use DBIx::Class::Fixtures;
 use Test::More;
 use File::Path 'rmtree';
 use Path::Class::File;
+use Path::Class::Dir;
 use lib qw(t/lib);
 use DBICTest;
 
@@ -89,6 +90,29 @@ my $fix_dir= "t/var/fixtures/file_per_set";
   is_deeply($got,$expected,'after populate - checking data in database');
 }
 
+{
+  rmtree $fix_dir;      
+  my $got='';
+
+  my ($out,$err);
+  local *STDOUT;
+  open(STDOUT,">", \$got);
+  $fixtures->dump({
+    config => 'file_per_set_wrong.json',
+    schema => $schema,
+    debug=>9,
+    directory => $fix_dir
+  });
+
+  my $dir = Path::Class::Dir->new($fix_dir,'artist');
+  my  @files = sort { $a > $b } map { $_->basename } $dir->children;
+  use Data::Dumper;
+  print Dumper(\@files);
+
+  my $dsfn = $fix_dir."/data_set.fix"; # dsfn = data set file name
+
+  is_deeply(\@files,[ '1.fix', '2.fix', '3.fix', '4.fix', '32948.fix' ],"splitted files");
+};
 done_testing;
 
 END {

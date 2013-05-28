@@ -702,7 +702,8 @@ sub dump {
     else {
       DBIx::Class::Exception->throw('must specify either quantity or ids');
     }
-
+    # Just to prevent misconfiguration which leads to empty result
+    $source_options{set}->{file_per_set} = $config->{file_per_set} || 0;
     $source_options{set_dir} = $tmp_output_dir;
     $self->dump_rs($rs, \%source_options );
   }
@@ -745,6 +746,7 @@ sub dump {
 
     }
   $self->_all_tables({});  
+  $self->dumped_objects({});  
   $self->msg("done");
 
   return 1;
@@ -878,7 +880,6 @@ sub dump_object {
   }
 
   my $key = join("\0", @pk_vals);
-
   my $exists = $self->dumped_objects->{$src->name}{$key}++;
 
 
@@ -941,7 +942,6 @@ sub dump_object {
         warn "datetime_relative not supported for this db driver at the moment";
       }
     }
-
     # do the actual dumping
     if (! $set->{file_per_set} ) { 
         my $file = $source_dir->file($record_id.'.fix');
