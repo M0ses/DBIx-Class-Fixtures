@@ -3,11 +3,11 @@
             "fetch": 0
         },
         "has_many": {
-            "fetch": 0
+            "fetch": "all"
         },
         "file_per_set" : 1,
         "sets": [{
-            "class": "Artist",
+            "class": "CD",
             "quantity": "all"
         }]
 }

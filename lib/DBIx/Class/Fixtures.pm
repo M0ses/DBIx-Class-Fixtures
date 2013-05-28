@@ -507,7 +507,7 @@ sub new {
 
   my $self = {
               config_dir => $config_dir,
-              _inherited_attributes => [qw/datetime_relative might_have rules belongs_to/],
+              _inherited_attributes => [qw/datetime_relative might_have rules belongs_to file_per_set/],
               debug => $params->{debug} || 0,
               ignore_sql_errors => $params->{ignore_sql_errors},
               dumped_objects => {},
