@@ -40,30 +40,38 @@ sub _set_table2class_map {
 
 has create_scripts_callback =>(
     is=>'rw',
-    isa=>'CODE',
+    isa=>'CodeRef',
     default=> sub {
         return 
         ## callback function
         sub {
             my ($self)=@_;
             my $direction = "upgrade";
+            my $schema = $self->schema;
 
-    if ($self->from_version > $self->to_version ) {
-        $direction = "downgrade"
-    }
+            $direction = "downgrade" if ($self->from_version > $self->to_version );
 
-    foreach my $db (@{$self->databases}) {
-      my $script_file = Path::Class::File->new($self->target_dir,'migrations',$db,$direction,$self->from_version."-".$self->to_version,"099-auto-fixtures-migration.pl");
-      my $template = 
-'
-#!/usr/bin/perl
+            foreach my $db (@{$self->databases}) {
+                my $script_file = Path::Class::File->new(
+                    $self->target_dir,
+                    'migrations',
+                    $db,
+                    $direction,
+                    $self->from_version."-".$self->to_version,
+                    "099-auto-fixtures-migration.pl"
+                );
+
+                my $template = 
+'#!/usr/bin/perl
 #
 use strict;
 use warnings;
 
 use DBIx::Class::Migration::RunScript;
 
-use IsarFlow::Schema::DB;
+
+use '.$schema.';
+
 my $routines = {
     "delete"    =>\&delete,
     "insert"    =>\&insert,
@@ -73,7 +81,7 @@ my $routines = {
 sub insert {
     my $self = shift;
     my $class = shift;
-    my $schema = IsarFlow::Schema::DB->connect({dbh_maker=>sub { return $self->dbh}});
+    my $schema = '.$schema.'->connect({dbh_maker=>sub { return $self->dbh}});
     foreach my $pk (keys(%%{$_[0]})) {
         print "  - inserting $pk\n";
         my $rs = $schema->resultset($class);
@@ -85,7 +93,7 @@ sub delete  {
 
     my $self = shift;
     my $class = shift;
-    my $schema = IsarFlow::Schema::DB->connect({dbh_maker=>sub { return $self->dbh}});
+    my $schema = '.$schema.'->connect({dbh_maker=>sub { return $self->dbh}});
 
     foreach my $pk (keys(%%{$_[0]})) {
         print "  - deleting $pk\n";
@@ -98,7 +106,7 @@ sub update  {
 
     my $self = shift;
     my $class = shift;
-    my $schema = IsarFlow::Schema::DB->connect({dbh_maker=>sub { return $self->dbh}});
+    my $schema = '.$schema.'->connect({dbh_maker=>sub { return $self->dbh}});
 
     foreach my $pk (keys(%%{$_[0]})) {
         print "  - updating $pk\n";
@@ -125,7 +133,7 @@ migrate {
         }
     }        
 
-}        
+}
 
 ';
         -d $script_file->parent->stringify || $script_file->parent->mkpath;
@@ -170,7 +178,7 @@ sub diff {
         eval "$fileStore->{to}->{text}";
         $fileStore->{to}->{struct} = $HASH1;
         
-        my $cmp = IsarFlow::DBIx::Class::Fixtures::Compare->new(
+        my $cmp = DBIx::Class::Fixtures::Compare->new(
             from=>$fileStore->{from}->{struct},
             to=>$fileStore->{to}->{struct}
         );

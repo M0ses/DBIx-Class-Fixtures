@@ -85,6 +85,7 @@ sub __compare_record {
     my $from    = $self->from->{$table}->{$pk};
     my $to      = $self->to->{$table}->{$pk};
 
+    no warnings 'uninitialized';
     while ( my ($key,$val) = each(%{$from})) {
        if ( $to->{$key} ne $val ) {
             # TODO: Log/debug print "$key from:$from->{$key} to:$to->{$key}\n";
@@ -97,6 +98,7 @@ sub __compare_record {
             return $to
        }        
     }
+    use warnings 'all';
     return undef;
 
 }
