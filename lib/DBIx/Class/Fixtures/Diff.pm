@@ -126,6 +126,7 @@ migrate {
     my %s
 
     foreach my $set_name (keys(%%{$VAR1})) {
+        print "- use Set $set_name";
         foreach my $class (keys(%%{$VAR1->{$set_name}})) {
             foreach my $meth (sort(keys(%%{$VAR1->{$set_name}->{$class}}))) {
                 $routines->{$meth}->($self,$class,$VAR1->{$set_name}->{$class}->{$meth});
