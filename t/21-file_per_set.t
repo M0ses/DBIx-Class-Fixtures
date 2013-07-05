@@ -61,7 +61,8 @@ my $expected;
   $fixtures->populate({
         ddl => 't/lib/sqlite.sql',
         connection_details => ['dbi:SQLite:t/var/DBIxClass.db', '', ''],
-        directory => $fix_dir
+        directory => $fix_dir,
+        use_create=>1
    });
   my $result = $schema->resultset('CD')->search(undef,{order_by=>'cdid'});
   # create expected hash
@@ -85,18 +86,16 @@ my $expected;
 
   my $dir = Path::Class::Dir->new($fix_dir,'artist');
   no warnings 'numeric';
-  my  @files = sort { $a > $b } map { $_->basename } $dir->children;
-  use Data::Dumper;
-  print Dumper(\@files);
+  my $files={};
+  map { $files->{$_->basename}=1 } $dir->children;
 
-  my $dsfn = $fix_dir."/data_set.fix"; # dsfn = data set file name
-
-  is_deeply(\@files,[ '1.fix', '2.fix', '3.fix' ],"splitted files");
+  is_deeply($files,{ '1.fix' => 1, '2.fix' => 1, '3.fix' =>1 },"splitted files");
 };
+
 done_testing;
 
 END {
-#    rmtree $fix_dir;
+    rmtree $fix_dir;
 }
 
 sub resultToRef {

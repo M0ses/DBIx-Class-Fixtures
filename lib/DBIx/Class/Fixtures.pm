@@ -25,7 +25,7 @@ our $namespace_counter = 0;
 
 __PACKAGE__->mk_group_accessors( 'simple' => qw/config_dir
     _inherited_attributes debug schema_class dumped_objects config_attrs
-    _all_tables _pk_autoincrement/);
+    _all_tables _pk_autoincrement _table2class_map _org_to_new_pk/);
 
 our $VERSION = '1.001018';
 
@@ -39,8 +39,8 @@ DBIx::Class::Fixtures - Dump data and repopulate a database using rules
 
  ...
 
- my $fixtures = DBIx::Class::Fixtures->new({ 
-     config_dir => '/home/me/app/fixture_configs' 
+ my $fixtures = DBIx::Class::Fixtures->new({
+     config_dir => '/home/me/app/fixture_configs'
  });
 
  $fixtures->dump({
@@ -88,7 +88,7 @@ For example:
          }
        ]
      }
-   ] 
+   ]
  }
 
 This will fetch artists with primary keys 1 and 3, the producer with primary
@@ -114,12 +114,12 @@ rule to specify this. For example:
      {
        "class": "Artist",
        "ids": ["1", "3"]
-     }, 
+     },
      {
        "class": "Producer",
        "ids": ["5"],
        "fetch": [
-         { 
+         {
            "rel": "artists",
            "quantity": "2"
          }
@@ -149,11 +149,11 @@ to CD. This is eqivalent to:
          "rel": "cds",
          "quantity": "all"
        } ]
-     }, 
+     },
      {
        "class": "Producer",
        "ids": ["5"],
-       "fetch": [ { 
+       "fetch": [ {
          "rel": "artists",
          "quantity": "2",
          "fetch": [ {
@@ -325,7 +325,7 @@ not if using for belongs_to or might_have relationships.
 =head2 has_many
 
 Specifies whether to fetch has_many rels for this set. Must be a hash
-containing keys fetch and quantity. 
+containing keys fetch and quantity.
 
 Set fetch to 1 if you want to fetch them, and quantity to either 'all' or an
 integer.
@@ -441,16 +441,16 @@ parameters:
 
 =over
 
-=item config_dir: 
+=item config_dir:
 
 required. must contain a valid path to the directory in which your .json
 configs reside.
 
-=item debug: 
+=item debug:
 
 determines whether to be verbose
 
-=item ignore_sql_errors: 
+=item ignore_sql_errors:
 
 ignore errors on import of DDL etc
 
@@ -515,11 +515,23 @@ sub new {
               config_attrs => $params->{config_attrs} || {},
               _all_tables=>{},
               _pk_autoincrement=>{},
+              _table2class_map => {},
+              _org_to_new_pk => {}
   };
 
   bless $self, $class;
 
   return $self;
+}
+
+sub _set_table2class_map {
+    my ( $self, $schema ) = @_;
+
+    my $map = $self->_table2class_map();
+    %{$map} = ();
+
+    map { $map->{$schema->source($_)->name} = $_ } $schema->sources;
+
 }
 
 =head2 available_config_sets
@@ -533,7 +545,7 @@ my @config_sets;
 sub available_config_sets {
   @config_sets = scalar(@config_sets) ? @config_sets : map {
     $_->basename;
-  } grep { 
+  } grep {
     -f $_ && $_=~/json$/;
   } dir((shift)->config_dir)->children;
 }
@@ -600,8 +612,8 @@ sub dump {
   my $schema = $params->{schema};
   my $config;
   if ($params->{config}) {
-    $config = ref $params->{config} eq 'HASH' ? 
-      $params->{config} : 
+    $config = ref $params->{config} eq 'HASH' ?
+      $params->{config} :
       do {
         #read config
         my $config_file = $self->config_dir->file($params->{config});
@@ -609,7 +621,7 @@ sub dump {
       };
   } elsif ($params->{all}) {
     my %excludes = map {$_=>1} @{$params->{excludes}||[]};
-    $config = { 
+    $config = {
       might_have => { fetch => 0 },
       has_many => { fetch => 0 },
       belongs_to => { fetch => 0 },
@@ -623,6 +635,8 @@ sub dump {
   } else {
     DBIx::Class::Exception->throw('must pass config or set all');
   }
+
+  $self->_set_table2class_map($schema);
 
   my $output_dir = dir($params->{directory});
   unless (-e $output_dir) {
@@ -669,22 +683,22 @@ sub dump {
     if ($source->{cond} and ref $source->{cond} eq 'HASH') {
       # if value starts with \ assume it's meant to be passed as a scalar ref
       # to dbic. ideally this would substitute deeply
-      $source->{cond} = { 
-        map { 
-          $_ => ($source->{cond}->{$_} =~ s/^\\//) ? \$source->{cond}->{$_} 
-                                                   : $source->{cond}->{$_} 
-        } keys %{$source->{cond}} 
+      $source->{cond} = {
+        map {
+          $_ => ($source->{cond}->{$_} =~ s/^\\//) ? \$source->{cond}->{$_}
+                                                   : $source->{cond}->{$_}
+        } keys %{$source->{cond}}
       };
     }
 
-    $rs = $rs->search($source->{cond}, { join => $source->{join} }) 
+    $rs = $rs->search($source->{cond}, { join => $source->{join} })
       if $source->{cond};
 
     $self->msg("- dumping $source->{class}");
 
     my %source_options = ( set => { %{$config}, %{$source} } );
     if ($source->{quantity}) {
-      $rs = $rs->search({}, { order_by => $source->{order_by} }) 
+      $rs = $rs->search({}, { order_by => $source->{order_by} })
         if $source->{order_by};
 
       if ($source->{quantity} =~ /^\d+$/) {
@@ -715,14 +729,14 @@ sub dump {
     if (exists($config->{dump_indent})) {
       $self->msg(" - setting indent to ".$config->{dump_indent},2);
       $dds->Indent($config->{dump_indent});
-    }      
+    }
     my $serialized = $dds->Dump($self->_all_tables)->Out();
     my $file=file($tmp_output_dir,'data_set.fix');
     $self->msg(" - writing data to file:  ".$file,2);
     $file->openw->print($serialized);
   }
   # clear existing output dir
-  if ( $output_dir ne $tmp_output_dir ) { 
+  if ( $output_dir ne $tmp_output_dir ) {
           foreach my $child ($output_dir->children) {
             if ($child->is_dir) {
               next if ($child eq $tmp_output_dir);
@@ -735,7 +749,7 @@ sub dump {
           }
 
           $self->msg("- moving temp dir to $output_dir");
-          move($_, dir($output_dir, $_->relative($_->parent)->stringify)) 
+          move($_, dir($output_dir, $_->relative($_->parent)->stringify))
             for $tmp_output_dir->children;
 
           if (-e $output_dir) {
@@ -745,8 +759,8 @@ sub dump {
         }
 
     }
-  $self->_all_tables({});  
-  $self->dumped_objects({});  
+  $self->_all_tables({});
+  $self->dumped_objects({});
   $self->msg("done");
 
   return 1;
@@ -765,27 +779,27 @@ sub load_config_file {
     DBIx::Class::Exception->throw(
       'includes params of config must be an array ref of hashrefs'
     ) unless ref $incs eq 'ARRAY';
-    
+
     foreach my $include_config (@$incs) {
       DBIx::Class::Exception->throw(
         'includes params of config must be an array ref of hashrefs'
       ) unless (ref $include_config eq 'HASH') && $include_config->{file};
-      
+
       my $include_file = $self->config_dir->file($include_config->{file});
 
       DBIx::Class::Exception->throw("config does not exist at $include_file")
         unless -e $include_file;
-      
+
       my $include = Config::Any::JSON->load($include_file);
       $self->msg($include);
       $config = merge( $config, $include );
     }
     delete $config->{includes};
   }
-  
+
   # validate config
   return DBIx::Class::Exception->throw('config has no sets')
-    unless $config && $config->{sets} && 
+    unless $config && $config->{sets} &&
            ref $config->{sets} eq 'ARRAY' && scalar @{$config->{sets}};
 
   $config->{might_have} = { fetch => 0 } unless exists $config->{might_have};
@@ -798,13 +812,62 @@ sub load_config_file {
 sub dump_rs {
     my ($self, $rs, $params) = @_;
 
+    my $schema = $rs->result_source->schema;
+
+    foreach my $rel ($rs->result_source->relationships) {
+        if (
+            $params->{set}->{pk_autoincrement} &&
+            __PACKAGE__->relationship_is_belongs_to($rel,$rs) &&
+            __PACKAGE__->relationship_references_auto_increment($rel,$rs)
+        ) {
+            my $referenced_class = $rs->result_source->relationship_info($rel)->{class};
+            next if ($self->_all_tables->{$referenced_class});
+            $self->dump_rs(
+                $schema->resultset($referenced_class),
+                $params
+            );
+        }
+    }
+
     while (my $row = $rs->next) {
         $self->dump_object($row, $params);
     }
 }
- 
+
+sub relationship_references_auto_increment {
+    my  ( $self, $relName,$rs ) = @_;
+
+    my $relInfo = $rs->result_source->relationship_info($relName);
+    my $class = $relInfo->{class};
+
+    my $frso=$rs->result_source->schema->resultset($class)->result_source;
+
+    foreach my $key (keys(%{$relInfo->{cond}})) {
+        if ( $key =~ /^foreign\.(\w+)$/ ) {
+            if ( $frso->column_info($1)->{is_auto_increment} ) {
+                return 1
+            };
+        }
+    }
+    return 0;
+} ## --- end sub relationship_references_auto_increment
+
+
+sub relationship_is_belongs_to {
+    my  ( $self, $relName,$rs ) = @_;
+    my $relInfo = $rs->result_source->relationship_info($relName);
+    if (
+        $relInfo->{attrs}->{accessor} eq 'single' ||
+        $relInfo->{attrs}->{accessor} eq 'filter'
+    ) {
+        return 1;
+    }
+
+    return 0;
+}
+
 sub dump_object {
-  my ($self, $object, $params) = @_;  
+  my ($self, $object, $params) = @_;
   my $set = $params->{set};
 
   my $v = Data::Visitor::Callback->new(
@@ -839,13 +902,13 @@ sub dump_object {
 
       return $_ unless defined $_;
 
-      my $subsre = join( '|', keys %$subs ); 
+      my $subsre = join( '|', keys %$subs );
       $_ =~ s{__($subsre)(?:\((.+?)\))?__}{ $subs->{ $1 }->( $self, $2 ? split( /,/, $2 ) : () ) }eg;
 
       return $_;
     }
   );
-  
+
   if (! $set->{skip_data_visitor} ) {
     $self->msg("  - using data visitor",9);
     $v->visit( $set );
@@ -858,30 +921,61 @@ sub dump_object {
 
   my @inherited_attrs = @{$self->_inherited_attributes};
   my $src = $object->result_source;
+  my $rs =  $src->resultset;
+  my %ds = $object->get_columns;
+
   my @pk_vals = map {
-     if ( $set->{pk_autoincrement} && $object->column_info($_)->{is_auto_increment} ) {
-        my $record_id = $self->_pk_autoincrement->{$src->name} || 0;
-        $record_id++;
-        $self->_pk_autoincrement->{$src->name} = $record_id;
-        $object->$_(undef);
+      if (
+        $set->{pk_autoincrement} &&
+        $object->column_info($_)->{is_auto_increment}
+      ) {
+        my $pk_val = $object->$_;
+        $self->_pk_autoincrement->{$src->name} = $self->_pk_autoincrement->{$src->name} || 1;
+        my $record_id = $self->_pk_autoincrement->{$src->name};
+
+        unless($pk_val == $record_id) {
+
+            foreach my $rel ( $src->relationships ) {
+                my $info = $src->relationship_info($rel);
+                while ( my ($fc,$sc) = each(%{$info->{cond}})) {
+                    next if $sc ne "self.$_";
+                    $fc =~ s/^foreign\.//;
+                    my $rObjects = $object->$rel();
+                    while ( my $robj = $rObjects->next ) {
+
+                      my $val = $robj->get_column($fc);
+                      next if ( $record_id == $val );
+                      $robj->set_column($fc=>$record_id);
+                      my $related_table_name = $robj->result_source->name;
+                      my $related_class_name = $self->_table2class_map->{$related_table_name};
+                      $self->_org_to_new_pk->{$related_class_name}->{$pk_val}=$record_id;
+                    }
+                }
+            }
+            $object->set_column($_=>$record_id);
+        }
+        $self->_pk_autoincrement->{$src->name} = $record_id + 1;
         $record_id;
+
      } else {
         $object->get_column($_)
      }
   } $object->primary_columns;
+
+  my $col_lookup={};
+  my $cinfo = $src->columns_info;
+
+  while (my ($key,$val) = each(%{$cinfo}) ) { if ($val->{accessor}) { $col_lookup->{$val->{accessor}} = $key} }
 
   if (ref($set->{substitute}) eq "HASH" ) {
     while ( my ($key,$val) = each(%{$set->{substitute}})) {
         if ($val) {
     		$val = \"$val" if ( $val =~ s/^\\// );
         }
-		$object->$key($val);
+        my $fn = $col_lookup->{$key} || $key;
+        $ds{$fn} = $val
     }
   }
-
-  my $key = join("\0", @pk_vals);
-  my $exists = $self->dumped_objects->{$src->name}{$key}++;
-
 
   # write dir and gen filename
   my $source_dir = $params->{set_dir}->subdir(lc $src->from);
@@ -890,12 +984,17 @@ sub dump_object {
   }
 
   # strip dir separators from file name
+  my $org_record_id = join('-', map { s|[/\\]|_|g; $_; } @pk_vals);
   my $record_id = join('-', map { s|[/\\]|_|g; $_; } @pk_vals);
+
+  my $key = join("\0", @pk_vals);
+  my $src_class = $self->_table2class_map->{$src->name};
+  my $exists = $self->dumped_objects->{$src_class}->{$org_record_id} || 0;
+  $self->dumped_objects->{$src_class}->{$org_record_id}++;
 
   # write file
   unless ($exists) {
     $self->msg('-- dumping ' . $record_id, 2);
-    my %ds = $object->get_columns;
 
     if($set->{external}) {
       foreach my $field (keys %{$set->{external}}) {
@@ -910,6 +1009,38 @@ sub dump_object {
           encode_base64( $class
            ->backup($key => $args));
       }
+    }
+
+    if ( $set->{pk_autoincrement} ) {
+        my $object_table_name = $object->result_source->name;
+        my $object_class_name = $self->_table2class_map->{$object_table_name};
+        foreach my $rel ($src->relationships) {
+            if (
+                $self->relationship_is_belongs_to($rel,$rs) &&
+                $self->relationship_references_auto_increment($rel,$rs)
+            ) {
+                my $related_object = $object->$rel();
+
+                my $rpk = $self->related_primary_keys($related_object);
+                my $related_table_name = $related_object->result_source->name;
+                #my $related_class_name = $self->_table2class_map->{$related_table_name};
+
+                $rpk = ($self->_org_to_new_pk->{$object_class_name}->{$rpk}) ? $self->_org_to_new_pk->{$object_class_name}->{$rpk} : $rpk;
+                $ds{$rel} = $self->_all_tables->{$related_table_name}->{$rpk};
+                my $cond = $src->relationship_info($rel)->{cond};
+
+                while (my ($f_col,$s_col) = each(%{$cond})) {
+                   $s_col =~ s/self\.//;
+                   # don`t delete if relationship and field has same name
+                   next if $rel eq $s_col;
+                   delete $ds{$s_col};
+                }
+            }
+        }
+        foreach my $pk ($object->primary_columns) {
+            next unless $object->column_info($pk)->{is_auto_increment};
+            delete $ds{$pk};
+        }
     }
 
     # mess with dates if specified
@@ -942,14 +1073,16 @@ sub dump_object {
         warn "datetime_relative not supported for this db driver at the moment";
       }
     }
+
     # do the actual dumping
-    if (! $set->{file_per_set} ) { 
+    if (! $set->{file_per_set} ) {
         my $file = $source_dir->file($record_id.'.fix');
         my $serialized = Dump(\%ds)->Out();
        $file->openw->print($serialized);
-    } else {   
+    } else {
+        #my $class = $self->_table2class_map->{$src->from};
         $self->_all_tables->{$src->from}->{$record_id} = \%ds;
-    }        
+    }
   }
 
   # don't bother looking at rels unless we are actually planning to dump at least one type
@@ -957,11 +1090,11 @@ sub dump_object {
     $set->{$_}{fetch} || $set->{rules}{$src->source_name}{$_}{fetch}
   } qw/might_have belongs_to has_many/;
 
+  return if ($set->{pk_autoincrement});
   return unless $might_have
              || $belongs_to
              || $has_many
              || $set->{fetch};
-
   # dump rels of object
   unless ($exists) {
     foreach my $name (sort $src->relationships) {
@@ -970,19 +1103,19 @@ sub dump_object {
       # if belongs_to or might_have with might_have param set or has_many with
       # has_many param set then
       if (
-            ( $info->{attrs}{accessor} eq 'single' && 
-              (!$info->{attrs}{join_type} || $might_have) 
+            ( $info->{attrs}{accessor} eq 'single' &&
+              (!$info->{attrs}{join_type} || $might_have)
             )
-         || $info->{attrs}{accessor} eq 'filter' 
-         || 
+         || $info->{attrs}{accessor} eq 'filter'
+         ||
             ($info->{attrs}{accessor} eq 'multi' && $has_many)
       ) {
-        my $related_rs = $object->related_resultset($name);	  
+        my $related_rs = $object->related_resultset($name);
         my $rule = $set->{rules}->{$related_rs->result_source->source_name};
         # these parts of the rule only apply to has_many rels
-        if ($rule && $info->{attrs}{accessor} eq 'multi') {		  
+        if ($rule && $info->{attrs}{accessor} eq 'multi') {
           $related_rs = $related_rs->search(
-            $rule->{cond}, 
+            $rule->{cond},
             { join => $rule->{join} }
           ) if ($rule->{cond});
 
@@ -992,23 +1125,23 @@ sub dump_object {
           ) if ($rule->{quantity} && $rule->{quantity} ne 'all');
 
           $related_rs = $related_rs->search(
-            {}, 
+            {},
             { order_by => $rule->{order_by} }
-          ) if ($rule->{order_by});		  
+          ) if ($rule->{order_by});
 
         }
-        if ($set->{has_many}{quantity} && 
+        if ($set->{has_many}{quantity} &&
             $set->{has_many}{quantity} =~ /^\d+$/) {
           $related_rs = $related_rs->search(
-            {}, 
+            {},
             { rows => $set->{has_many}->{quantity} }
           );
         }
 
         my %c_params = %{$params};
         # inherit date param
-        my %mock_set = map { 
-          $_ => $set->{$_} 
+        my %mock_set = map {
+          $_ => $set->{$_}
         } grep { $set->{$_} } @inherited_attrs;
 
         $c_params{set} = \%mock_set;
@@ -1016,14 +1149,14 @@ sub dump_object {
           if $rule && $rule->{fetch};
 
         $self->dump_rs($related_rs, \%c_params);
-      }	
+      }
     }
   }
-  
+
   return unless $set && $set->{fetch};
   foreach my $fetch (@{$set->{fetch}}) {
     # inherit date param
-    $fetch->{$_} = $set->{$_} foreach 
+    $fetch->{$_} = $set->{$_} foreach
       grep { !$fetch->{$_} && $set->{$_} } @inherited_attrs;
     my $related_rs = $object->related_resultset($fetch->{rel});
     my $rule = $set->{rules}->{$related_rs->result_source->source_name};
@@ -1035,22 +1168,22 @@ sub dump_object {
       } elsif ($rule->{fetch}) {
         $fetch = merge( $fetch, { fetch => $rule->{fetch} } );
       }
-    } 
+    }
 
-    die "relationship $fetch->{rel} does not exist for " . $src->source_name 
+    die "relationship $fetch->{rel} does not exist for " . $src->source_name
       unless ($related_rs);
 
     if ($fetch->{cond} and ref $fetch->{cond} eq 'HASH') {
       # if value starts with \ assume it's meant to be passed as a scalar ref
       # to dbic.  ideally this would substitute deeply
-      $fetch->{cond} = { map { 
-          $_ => ($fetch->{cond}->{$_} =~ s/^\\//) ? \$fetch->{cond}->{$_} 
-                                                  : $fetch->{cond}->{$_} 
+      $fetch->{cond} = { map {
+          $_ => ($fetch->{cond}->{$_} =~ s/^\\//) ? \$fetch->{cond}->{$_}
+                                                  : $fetch->{cond}->{$_}
       } keys %{$fetch->{cond}} };
     }
 
     $related_rs = $related_rs->search(
-      $fetch->{cond}, 
+      $fetch->{cond},
       { join => $fetch->{join} }
     ) if $fetch->{cond};
 
@@ -1059,12 +1192,20 @@ sub dump_object {
       { rows => $fetch->{quantity} }
     ) if $fetch->{quantity} && $fetch->{quantity} ne 'all';
     $related_rs = $related_rs->search(
-      {}, 
+      {},
       { order_by => $fetch->{order_by} }
     ) if $fetch->{order_by};
 
     $self->dump_rs($related_rs, { %{$params}, set => $fetch });
   }
+}
+
+sub related_primary_keys {
+    my ($self,$object) = @_;
+    my @pk_vals = map { $object->get_column($_);  } $object->primary_columns;
+    my $record_id = join('-', map { s|[/\\]|_|g; $_; } @pk_vals);
+
+    return $record_id;
 }
 
 sub _generate_schema {
@@ -1098,8 +1239,8 @@ sub _generate_schema {
   $pre_schema->storage->txn_do(sub {
     $pre_schema->storage->with_deferred_fk_checks(sub {
       foreach my $table (@tables) {
-        eval { 
-          $dbh->do("drop table $table" . ($params->{cascade} ? ' cascade' : '') ) 
+        eval {
+          $dbh->do("drop table $table" . ($params->{cascade} ? ' cascade' : '') )
         };
       }
     });
@@ -1120,6 +1261,7 @@ sub _generate_schema {
   my $namespace2 = "DBIx::Class::Fixtures::GeneratedSchema_$namespace_counter";
   Class::C3::Componentised->inject_base( $namespace2 => $schema_class );
   my $schema = $namespace2->connect(@{$connection_details});
+
   return $schema;
 }
 
@@ -1220,13 +1362,13 @@ sub dump_all_config_sets {
 
  $fixtures->populate( {
    # directory to look for fixtures in, as specified to dump
-   directory => '/home/me/app/fixtures', 
+   directory => '/home/me/app/fixtures',
 
    # DDL to deploy
-   ddl => '/home/me/app/sql/ddl.sql', 
+   ddl => '/home/me/app/sql/ddl.sql',
 
    # database to clear, deploy and then populate
-   connection_details => ['dbi:mysql:dbname=app_dev', 'me', 'password'], 
+   connection_details => ['dbi:mysql:dbname=app_dev', 'me', 'password'],
 
    # DDL to deploy after populating records, ie. FK constraints
    post_ddl => '/home/me/app/sql/post_ddl.sql',
@@ -1234,7 +1376,7 @@ sub dump_all_config_sets {
    # use CASCADE option when dropping tables
    cascade => 1,
 
-   # optional, set to 1 to run ddl but not populate 
+   # optional, set to 1 to run ddl but not populate
    no_populate => 0,
 
 	# optional, set to 1 to run each fixture through ->create rather than have
@@ -1265,7 +1407,7 @@ If your tables have foreign key constraints you may want to use the cascade
 attribute which will make the drop table functionality cascade, ie 'DROP TABLE
 $table CASCADE'.
 
-C<directory> is a required attribute. 
+C<directory> is a required attribute.
 
 If you wish for DBIx::Class::Fixtures to clear the database for you pass in
 C<dll> (path to a DDL sql file) and C<connection_details> (array ref  of DSN,
@@ -1301,8 +1443,8 @@ sub populate {
     unless (ref $params->{connection_details} eq 'ARRAY') {
       return DBIx::Class::Exception->throw('connection details must be an arrayref');
     }
-    $schema = $self->_generate_schema({ 
-      ddl => $ddl_file, 
+    $schema = $self->_generate_schema({
+      ddl => $ddl_file,
       connection_details => delete $params->{connection_details},
       %{$params}
     });
@@ -1313,8 +1455,8 @@ sub populate {
   }
 
 
-  return 1 if $params->{no_populate}; 
-  
+  return 1 if $params->{no_populate};
+
   $self->msg("\nimporting fixtures");
   my $version_file = file($fixture_dir, '_dumper_version');
   my $config_set_path = file($fixture_dir, '_config_set');
@@ -1353,7 +1495,7 @@ sub populate {
         },
       };
 
-      my $subsre = join( '|', keys %$subs ); 
+      my $subsre = join( '|', keys %$subs );
       $_ =~ s{__($subsre)(?:\((.+?)\))?__}{ $subs->{ $1 }->( $self, $2 ? split( /,/, $2 ) : () ) }eg;
 
       return $_;
@@ -1376,7 +1518,7 @@ sub populate {
 
 #  DBIx::Class::Exception->throw('no version file found');
 #    unless -e $version_file;
-  if ($fixture_dir ne $tmp_fixture_dir ) { 
+  if ($fixture_dir ne $tmp_fixture_dir ) {
           if (-e $tmp_fixture_dir) {
             $self->msg("- deleting existing temp directory $tmp_fixture_dir");
             $tmp_fixture_dir->rmtree;
@@ -1394,7 +1536,7 @@ sub populate {
               my $to = $tmp_fixture_dir->file('data_set.fix');
               $self->msg("from $from -> to $to",9);
               File::Copy::copy($from,$to);
-          }        
+          }
   }
 
   unless (-d $tmp_fixture_dir) {
@@ -1414,7 +1556,7 @@ sub populate {
         $formatter->format_datetime(DateTime->today->add_duration($_))
       };
     }
-    $callbacks{object} ||= "visit_ref";	
+    $callbacks{object} ||= "visit_ref";
     $fixup_visitor = new Data::Visitor::Callback(%callbacks);
   }
 
@@ -1426,9 +1568,13 @@ sub populate {
         $self->msg("- adding " . $source);
 
         my $rs = $schema->resultset($source);
+        #my $src = $rs->result_sourceschema->resultset($source);
+        #my $referenced_class = $rs->result_source->relationship_info($rel)->{class};
+        #next if ($self->_all_tables->{$referenced_class});
+        print $rs->result_source->result_class . "\n";
         next unless ($in_data->{$source});
         my @rows;
-        foreach my $key (keys(%{$in_data->{$source}})) {
+        foreach my $key (sort sort_pk_numeric keys(%{$in_data->{$source}})) {
           $self->msg("  - using pk ".$key,9);
 
           my $HASH1 = $in_data->{$source}->{$key};
@@ -1452,7 +1598,7 @@ sub populate {
             }
           }
           if ( $params->{use_create} ) {
-            $rs->create( $HASH1 );
+            $rs->find_or_create( $HASH1 );
           } else {
             push(@rows, $HASH1);
           }
@@ -1491,7 +1637,7 @@ sub populate {
     $self->msg("- cleaning up");
     $self->msg(" - removing dir: ".$tmp_fixture_dir,7);
     $tmp_fixture_dir->rmtree;
-  };  
+  };
   return 1;
 }
 
@@ -1506,17 +1652,18 @@ sub _get_data_from_files {
         my $fc = $in_file->slurp;
         eval $fc;
         foreach my $source (sort $schema->sources) {
+        $self->msg("   - adding " . $source);
             my $table = $schema->source($source)->from;
             if ($HASH1->{$table}) {
                     $HASH1->{$source} = $HASH1->{$table};
                     delete $HASH1->{$table};
-            }       
+            }
         }
         $result = $HASH1;
     } else {
       foreach my $source (sort $schema->sources) {
-              
-        $self->msg("- adding " . $source);
+ 
+        $self->msg(" - adding " . $source);
         my $rs = $schema->resultset($source);
         my $source_dir = $tmp_fixture_dir->subdir( lc $rs->result_source->from );
         next unless (-e $source_dir);
@@ -1531,12 +1678,12 @@ sub _get_data_from_files {
           my $HASH1;
           eval($contents);
           %{$result->{$source}} = (%{$result->{$source}},$key=>$HASH1);
-        }  
+        }
         $self->msg("   - using file per record",9);
-      }  
+      }
     }
     return $result;
-}        
+}
 
 sub do_post_ddl {
   my ($self, $params) = @_;
@@ -1555,7 +1702,7 @@ sub msg {
   my $subject = shift || return;
   my $level = shift || 1;
   return unless $self->debug >= $level;
-  # usefull for debugging 
+  # usefull for debugging
   #my $c1 = join(' ',caller()). " ::";
   my $c1='';
   if (ref $subject) {
@@ -1563,6 +1710,23 @@ sub msg {
   } else {
 	print $c1.$subject . "\n";
   }
+}
+
+sub sort_pk_numeric {
+    my @nA = split(/-/,$a);
+    my @nB = split(/-/,$b);
+    my $i=0;
+    my ($csa,$csb) = (0,0);
+    for ($i=0; $i <= $#nA;$i++) {
+        my ($fa,$fb) = ($nA[$i] || '',$nB[$i] || '');
+        next if ( $fa !~ /^\d+$/ || $fb !~ /^\d+$/ );
+        my ($la,$lb)=(length($fa),length($fb));
+        my $ml = ( $la > $lb ) ? $la : $lb ; # ml = max length
+        $csa .= sprintf("%0".$ml."s",$fa);
+        $csb .= sprintf("%0".$ml."s",$fb);
+    }
+
+    $csa cmp $csb;
 }
 
 =head1 AUTHOR

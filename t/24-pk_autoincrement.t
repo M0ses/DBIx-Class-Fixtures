@@ -12,23 +12,18 @@ my $fix_dir= "t/var/fixtures/pk_autoincrement";
 
 my $expected = { artist => {
                 1 => {
-                       artistid => undef,
                        name     => 'Caterwauler McCrae'
                      },
                 2 => {
-                       artistid => undef,
                        name     => 'Random Boy Band'
                      },
                 3 => {
-                       artistid => undef,
                        name     => 'We Are Goth'
                      },
                 4 => {
-                       artistid => undef,
                        name     => ''
                      },
                 5 => {
-                       artistid => undef,
                        name     => 'Big PK'
                      }
               } };
@@ -51,7 +46,7 @@ my $expected = { artist => {
   $fixtures->dump({
     config => 'pk_autoincrement.json',
     schema => $schema,
-    directory => $fix_dir
+    directory => $fix_dir,
   });
   my $dsfn = $fix_dir."/data_set.fix"; # dsfn = data set file name
   my $infile = Path::Class::file->new($dsfn);
@@ -72,7 +67,7 @@ my $expected = { artist => {
 $fixtures->populate({
     ddl => 't/lib/sqlite.sql',
     connection_details => ['dbi:SQLite:t/var/DBIxClass.db', '', ''],
-    directory => $fix_dir
+    directory => $fix_dir,
 });
 
 my $got = $schema->resultset('Artist')->find({name=>'Big PK'})->artistid;

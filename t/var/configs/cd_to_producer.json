@@ -1,0 +1,17 @@
+{
+        "might_have": {
+            "fetch": 0
+        },
+        "has_many": {
+            "fetch": 0
+        },
+        "file_per_set" : 1,
+        "pk_autoincrement": 1,
+        "sets": [
+            {
+                "class": "CD_to_Producer",
+                "pk_autoincrement": 1,
+                "quantity": "all"
+            }
+        ]
+}

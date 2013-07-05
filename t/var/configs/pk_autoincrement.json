@@ -9,6 +9,7 @@
         "sets": [{
             "class": "Artist",
             "pk_autoincrement" : 1,
+            "use_create" : 1,
             "quantity": "all"
         }]
 }

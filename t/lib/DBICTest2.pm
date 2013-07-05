@@ -1,5 +1,5 @@
 package # hide from PAUSE 
-    DBICTest;
+    DBICTest2;
 
 use strict;
 use warnings;
@@ -103,6 +103,7 @@ sub deploy_schema {
     close IN;
 
     foreach my $line (split(/;\n/, $sql)) {
+      print "$line\n";
       next if(!$line);
       next if($line =~ /^--/);
       next if($line =~ /^BEGIN TRANSACTION/m);
@@ -177,19 +178,19 @@ sub populate_schema {
 
     $schema->populate('Producer', [
         [ qw/producerid name/ ],
-        [ 1, 'Matt S Trout' ],
-        [ 2, 'Bob The Builder' ],
-        [ 3, 'Fred The Phenotype' ],
+        [ 4, 'Matt S Trout' ],
+        [ 5, 'Bob The Builder' ],
+        [ 6, 'Fred The Phenotype' ],
     ]);
 
     $schema->populate('CD_to_Producer', [
         [ qw/cd producer/ ],
-        [ 1, 1 ],
-        [ 1, 2 ],
-        [ 1, 3 ],
-        [ 2, 1 ],
-        [ 2, 2 ],
-        [ 3, 3 ],
+        [ 1, 4 ],
+        [ 1, 5 ],
+        [ 1, 6 ],
+        [ 2, 4 ],
+        [ 2, 5 ],
+        [ 3, 6 ],
     ]);
 
     $schema->populate('Track', [
