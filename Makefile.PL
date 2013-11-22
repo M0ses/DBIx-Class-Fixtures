@@ -19,6 +19,7 @@ requires 'Scalar::Util';
 requires 'MIME::Base64';
 requires 'File::Spec::Functions';
 requires 'File::Path';
+requires 'Template';
 
 requires 'DateTime::Format::SQLite' => 0.10;
 requires 'DateTime::Format::MySQL' => 0;

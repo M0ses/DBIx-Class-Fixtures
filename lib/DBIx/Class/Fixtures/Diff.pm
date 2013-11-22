@@ -3,7 +3,7 @@ package DBIx::Class::Fixtures::Diff;
 use Moose;
 use Path::Class::File;
 use Data::Dumper;
-
+use Template;
 has target_dir          => (is=>'rw',isa=>'Str',default=>'./share');
 
 
@@ -30,7 +30,7 @@ has databases           => (is=>'rw',isa=>'ArrayRef'    , default=>sub { [] });
 
 sub _set_table2class_map {
     my ( $self, $schema, $old_schema ) = @_;
-    
+
     my $map = $self->_table2class_map();
     %{$map} = ();
 
@@ -42,111 +42,37 @@ has create_scripts_callback =>(
     is=>'rw',
     isa=>'CodeRef',
     default=> sub {
-        return 
+        return
         ## callback function
-        sub {
-            my ($self)=@_;
-            my $direction = "upgrade";
-            my $schema = $self->schema;
+            sub {
+                my ($self)=@_;
+                my $direction = "upgrade";
+                my $schema = $self->schema;
 
-            $direction = "downgrade" if ($self->from_version > $self->to_version );
+                $direction = "downgrade" if ($self->from_version > $self->to_version );
 
-            foreach my $db (@{$self->databases}) {
-                my $script_file = Path::Class::File->new(
-                    $self->target_dir,
-                    'migrations',
-                    $db,
-                    $direction,
-                    $self->from_version."-".$self->to_version,
-                    "099-auto-fixtures-migration.pl"
-                );
+                foreach my $db (@{$self->databases}) {
+                    my $script_file = Path::Class::File->new(
+                        $self->target_dir,
+                        'migrations',
+                        $db,
+                        $direction,
+                        $self->from_version."-".$self->to_version,
+                        "099-auto-fixtures-migration.pl"
+                    );
 
-                my $template = 
-'#!/usr/bin/perl
-#
-use strict;
-use warnings;
+                    my $output = '';
+                    my $template = Template->new();
+                    my $vars={
+                        schema=>$schema,
+                        VAR1=>Dumper($self->__diff_struct)
+                    };
+                    $template->process(\*DATA, $vars,\$output) || die $template->error(), "\n";
+                    -d $script_file->parent->stringify || $script_file->parent->mkpath;
+                    $script_file->spew($output);
+                }
 
-use DBIx::Class::Migration::RunScript;
-
-
-use '.$schema.';
-
-my $routines = {
-    "delete"    =>\&delete,
-    "insert"    =>\&insert,
-    "update"    =>\&update,
-};
-
-sub insert {
-    my $self = shift;
-    my $class = shift;
-    my $schema = '.$schema.'->connect({dbh_maker=>sub { return $self->dbh}});
-    foreach my $pk (keys(%%{$_[0]})) {
-        print "  - inserting $pk\n";
-        my $rs = $schema->resultset($class);
-        $rs->find_or_create($_[0]->{$pk});
-     }
-}
-
-sub delete  {
-
-    my $self = shift;
-    my $class = shift;
-    my $schema = '.$schema.'->connect({dbh_maker=>sub { return $self->dbh}});
-
-    foreach my $pk (keys(%%{$_[0]})) {
-        print "  - deleting $pk\n";
-        my $rs = $schema->resultset($class)->find($_[0]->{$pk});
-        $rs->delete;
-     }
-
-}
-sub update  {
-
-    my $self = shift;
-    my $class = shift;
-    my $schema = '.$schema.'->connect({dbh_maker=>sub { return $self->dbh}});
-
-    foreach my $pk (keys(%%{$_[0]})) {
-        print "  - updating $pk\n";
-        my $rs = $schema->resultset($class)->find($_[0]->{$pk});
-
-        if (! $rs ) {
-            print "   - Not found\n";
-        } else {
-            $rs->update($_[0]->{$pk});
-        }
-
-     }
-}
-
-migrate {
-    my $self = shift;
-    my %s
-
-    foreach my $set_name (keys(%%{$VAR1})) {
-        print "- use Set $set_name";
-        foreach my $class (keys(%%{$VAR1->{$set_name}})) {
-            foreach my $meth (sort(keys(%%{$VAR1->{$set_name}->{$class}}))) {
-                $routines->{$meth}->($self,$class,$VAR1->{$set_name}->{$class}->{$meth});
-            }        
-        }
-    }        
-
-}
-
-';
-        -d $script_file->parent->stringify || $script_file->parent->mkpath;
-        $script_file->spew(
-            sprintf(
-                $template,
-                Dumper($self->__diff_struct)
-            )    
-        );
-    }
-    
-} # end code ref
+            } # end code ref
     } # end default sub
 );
 
@@ -156,7 +82,7 @@ sub create_migration_scripts {
     my $codeRef = $self->create_scripts_callback;
 
     $codeRef->(@_);
-}    
+}
 
 sub diff {
     my $self = shift;
@@ -166,23 +92,30 @@ sub diff {
     my $map = $self->_table2class_map;
 
     # TODO: Refactor - function would be cool
-    foreach my $set_name (@{$self->named_sets}) { 
-        my $HASH1;    
-        $fileStore->{from}->{file} = Path::Class::File->new($self->target_dir,'fixtures',$self->from_version,$set_name,"data_set.fix"); 
-        $fileStore->{to}->{file} = Path::Class::File->new($self->target_dir,'fixtures',$self->to_version,$set_name,"data_set.fix"); 
-        $fileStore->{from}->{file}->openr;
-        $fileStore->{to}->{file}->openr;
+    foreach my $set_name (@{$self->named_sets}) {
+        my $HASH1=undef;
+        my $VAR1=undef;
+        $fileStore->{from}->{file} = Path::Class::File->new($self->target_dir,'fixtures',$self->from_version,$set_name,"data_set.fix");
+        $fileStore->{to}->{file} = Path::Class::File->new($self->target_dir,'fixtures',$self->to_version,$set_name,"data_set.fix");
+        $fileStore->{config}->{file} = Path::Class::File->new($self->target_dir,'fixtures',$self->to_version,$set_name,"_config_set");
+
         $fileStore->{from}->{text} = $fileStore->{from}->{file}->slurp;
         $fileStore->{to}->{text} = $fileStore->{to}->{file}->slurp;
+        $fileStore->{config}->{text} = $fileStore->{config}->{file}->slurp;
         eval "$fileStore->{from}->{text}";
         $fileStore->{from}->{struct} = $HASH1;
         eval "$fileStore->{to}->{text}";
         $fileStore->{to}->{struct} = $HASH1;
-        
+        eval "$fileStore->{config}->{text}";
+        $fileStore->{config}->{struct} = $VAR1;
+
+
         my $cmp = DBIx::Class::Fixtures::Compare->new(
             from=>$fileStore->{from}->{struct},
-            to=>$fileStore->{to}->{struct}
+            to=>$fileStore->{to}->{struct},
+            config=>$self->_prepare_config($fileStore->{config}->{struct})
         );
+
         my $raw_struct = $cmp->compare;
         foreach my $old_key (keys%{$raw_struct}) {
             my $new_key = $map->{$old_key};
@@ -190,10 +123,209 @@ sub diff {
             delete $raw_struct->{$old_key};
         }
         $structs->{$set_name} = $raw_struct;
-    }    
+    }
 
     $self->__diff_struct($structs);
     return $structs;
-}        
+}
+
+sub _prepare_config {
+    my $self = shift;
+    my $config = shift;
+    my $map = $self->_table2class_map;
+    my $rmap={};
+    my $rv={};
+    while (my ($k,$v) = each(%$map) ) {  $rmap->{$v} = $k }
+
+    foreach my $set (@{$config->{sets}}) {
+        $rv->{
+           $rmap->{$set->{class}}
+        } = $set->{diff_config} || {};
+    }
+    return $rv;
+}
 
 1;
+__DATA__
+#!/usr/bin/perl
+#
+use strict;
+use warnings;
+
+use DBIx::Class::Migration::RunScript;
+
+
+use [% schema %];
+use Data::Dumper ;
+
+my $routines = {
+    "delete"    =>\&delete,
+    "insert"    =>\&insert,
+    "create"    =>\&create,
+    "update"    =>\&update,
+    "update_or_create"    =>\&update_or_create,
+    "preSQLStmt"        => \&preSQLStmt,
+};
+
+sub printDebug {
+
+	print @_ if ($ENV{IF_MIGRATION_DEBUG});
+
+}
+
+sub sort_pk_numeric {
+    my @nA = split(/-/,$a);
+    my @nB = split(/-/,$b);
+    my $i=0;
+    my ($csa,$csb) = (0,0);
+    for ($i=0; $i <= $#nA;$i++) {
+        my ($fa,$fb) = ($nA[$i] || '',$nB[$i] || '');
+        next if ( $fa !~ /^\d+$/ || $fb !~ /^\d+$/ );
+        my ($la,$lb)=(length($fa),length($fb));
+        my $ml = ( $la > $lb ) ? $la : $lb ; # ml = max length
+        $csa .= sprintf("%0".$ml."s",$fa);
+        $csb .= sprintf("%0".$ml."s",$fb);
+    }
+
+    $csa cmp $csb;
+}
+
+sub insert {
+    my ($self,$class,$inData,$options) = @_;
+
+    my $schema = [% schema %]->connect({dbh_maker=>sub { return $self->dbh}});
+    foreach my $pk (sort sort_pk_numeric (keys(%{$inData}))) {
+        printDebug "  - inserting $pk\n";
+        my $rs = $schema->resultset($class);
+        $rs->find_or_create($inData->{$pk});
+     }
+}
+
+sub create {
+    my ($self,$class,$inData,$options) = @_;
+
+    my $schema = [% schema %]->connect({dbh_maker=>sub { return $self->dbh}});
+    foreach my $pk (sort sort_pk_numeric (keys(%{$inData}))) {
+        printDebug "  - creating $pk\n";
+        my $data = $inData->{$pk};
+        $schema->resultset($class)->create($inData->{$pk});
+     }
+}
+
+sub delete  {
+    my ($self,$class,$inData,$options) = @_;
+
+    my $schema = [% schema %]->connect({dbh_maker=>sub { return $self->dbh}});
+
+    foreach my $pk (sort sort_pk_numeric keys(%{$inData})) {
+        printDebug "  - deleting $pk\n";
+        my $sd = prepare_search_data(
+            $self,
+            $inData->{$pk},
+            $options
+        );
+        my $rs = $schema->resultset($class)->find($sd);
+        if ($rs) {
+            $rs->delete;
+        } else {
+            printDebug "   - Cannot find Element for $pk\n";
+        }
+     }
+
+}
+sub update  {
+    my ($self,$class,$inData,$options) = @_;
+
+    my $schema = [% schema %]->connect({dbh_maker=>sub { return $self->dbh}});
+
+    foreach my $pk (sort sort_pk_numeric keys(%{$inData})) {
+        printDebug "  - updating $pk\n";
+        my $sd = prepare_search_data(
+            $self,
+            $inData->{$pk},
+            $options
+        );
+
+        my $rs = $schema->resultset($class)->find($sd);
+
+        if (! $rs ) {
+            printDebug "   - Not found\n";
+        } else {
+            printDebug "   - updating ...\n";
+            $rs->update($inData->{$pk});
+        }
+
+     }
+}
+
+sub update_or_create {
+    my ($self,$class,$inData,$options) = @_;
+    my $schema = [% schema %]->connect({dbh_maker=>sub { return $self->dbh}});
+    my $rs = $schema->resultset($class);
+
+    foreach my $pk (sort sort_pk_numeric (keys(%{$inData}))) {
+        printDebug "  - update_or_create $pk\n";
+        my $sd = prepare_search_data(
+            $self,
+            $inData->{$pk},
+            $options
+        );
+        my $row = $rs->find($sd);
+        if (! $row ) {
+            printDebug "   - creating ...\n";
+            $rs->create($inData->{$pk});
+        } else {
+            printDebug "   - updating ...\n";
+            $row->update($inData->{$pk});
+        }
+
+     }
+}
+
+sub prepare_search_data {
+    my ($self,$data,$options) = @_;
+
+    return $data if (ref($options->{search_fields}) ne 'ARRAY' );
+    my $sf = $options->{search_fields};
+    my $tmpData={};
+
+    foreach my $field (@{$sf}) {
+        $tmpData->{$field} = $data->{$field}
+    }
+    return $tmpData;
+}
+
+
+sub preSQLStmt {
+    my ($self,$class,$stmt) = @_;
+
+    $self->dbh->do($stmt);
+
+}
+
+migrate {
+    my $self = shift;
+    my [% VAR1 %]
+
+    printDebug "migrate ... \n";
+
+    foreach my $set_name (keys(%{$VAR1})) {
+        printDebug "- use Set $set_name\n";
+        foreach my $class (keys(%{$VAR1->{$set_name}})) {
+            next if ($class eq 'options');
+            foreach my $meth (qw/preSQLStmt delete create insert update update_or_create/) {
+                next if ( ! $VAR1->{$set_name}->{$class}->{$meth} );
+                $routines->{$meth}->(
+                        $self,
+                        $class,
+                        $VAR1->{$set_name}->{$class}->{$meth},
+                        $VAR1->{$set_name}->{options}->{$meth}
+                );
+            }
+        }
+    }
+
+    printDebug "... migration finished\n";
+
+}
+
