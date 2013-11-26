@@ -9,30 +9,6 @@ use Test::More;
 
 my $DEBUG = $ENV{DBIC_FIXTURES_DEBUG} || 0;
 
-
-#my $fixturesBasePath = "$FindBin::Bin/data/share/fixtures/";
-#my $fContent={}; # fileContent
-#
-#foreach my $version (1,2) {
-#    my $HASH1;
-#    my $tmpFile=Path::Class::File->new("$fixturesBasePath/$version/User/data_set.fix");
-#
-#    $tmpFile->openr();
-#    my $tmpContent = $tmpFile->slurp();
-#
-#    eval "$tmpContent";
-#    $fContent->{$version}=$HASH1;
-#
-#}
-#
-#my $upgrade = compareFixtures($fContent->{1},$fContent->{2});
-#
-#print Dumper($upgrade);
-#
-#exit 0;
-#
-#
-
 =head1 ACCESSORS/METHODS
 
 =head2 from - Hash which contains source fixtures
@@ -69,12 +45,23 @@ sub __compare_table {
     my $from    = $self->from->{$table};
     my $to      = $self->to->{$table};
     my $result  = $self->__result->{$table} = {};
-
+    my $strat   = $self->config->{$table}->{update_strategy} || 'update';
+    if ( $self->config->{$table}->{pre_sql_statement} ) {
+        $result->{pre_sql_statement} = $self->config->{$table}->{pre_sql_statement};
+    }
     foreach my $pk (keys(%{$from})) {
         if ( $to->{$pk} ) {
             my $cs = $self->__compare_record($table,$pk); # cs = compared set
-            #$result->{'update'}->{$pk} = { from => $from->{$pk}, to =>$cs } if ($cs);
-            $result->{'update'}->{$pk} = $cs  if ($cs);
+            if ($cs) {
+                if ( $strat ne 'recreate' ) {
+                    $result->{$strat}->{$pk} = $cs;
+                } else {
+                    $result->{'delete'}->{$pk} = $from->{$pk};
+                    $result->{'insert'}->{$pk} = $to->{$pk};
+                }
+
+            }
+
         } else {
             $result->{'delete'}->{$pk} = $from->{$pk} unless ($to->{$pk});
         }
@@ -97,7 +84,6 @@ sub __compare_record {
     while ( my ($key,$val) = each(%{$from})) {
        next if ( $key ~~ @{$config->{exclude_fields}} );
        if ( $to->{$key} ne $val ) {
-            # TODO: Log/debug print "$key from:$from->{$key} to:$to->{$key}\n";
             printDebug(
                 "\$from->{$key} differs from \$to->{$key}",
                 "from val: '$from->{$key}'",

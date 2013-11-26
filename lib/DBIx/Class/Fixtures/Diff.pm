@@ -164,7 +164,7 @@ my $routines = {
     "create"    =>\&create,
     "update"    =>\&update,
     "update_or_create"    =>\&update_or_create,
-    "preSQLStmt"        => \&preSQLStmt,
+    "pre_sql_statement"        => \&pre_sql_statement
 };
 
 sub printDebug {
@@ -296,7 +296,7 @@ sub prepare_search_data {
 }
 
 
-sub preSQLStmt {
+sub pre_sql_statement {
     my ($self,$class,$stmt) = @_;
 
     $self->dbh->do($stmt);
@@ -313,7 +313,7 @@ migrate {
         printDebug "- use Set $set_name\n";
         foreach my $class (keys(%{$VAR1->{$set_name}})) {
             next if ($class eq 'options');
-            foreach my $meth (qw/preSQLStmt delete create insert update update_or_create/) {
+            foreach my $meth (qw/pre_sql_statement delete create insert update update_or_create/) {
                 next if ( ! $VAR1->{$set_name}->{$class}->{$meth} );
                 $routines->{$meth}->(
                         $self,
