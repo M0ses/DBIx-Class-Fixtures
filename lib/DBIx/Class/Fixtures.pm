@@ -25,7 +25,7 @@ our $namespace_counter = 0;
 
 __PACKAGE__->mk_group_accessors( 'simple' => qw/config_dir
     _inherited_attributes debug schema_class dumped_objects config_attrs
-    _all_tables _pk_autoincrement _table2class_map _org_to_new_pk/);
+    _all_tables _pk_autoincrement _table2class_map _org_to_new_pk schema_loader_extra_args/);
 
 our $VERSION = '1.001018';
 
@@ -508,11 +508,12 @@ sub new {
   my $self = {
               config_dir => $config_dir,
               _inherited_attributes => [qw/datetime_relative might_have rules belongs_to file_per_set/],
-              debug => $params->{debug} || 0,
+              debug => $ENV{DBIC_FIXTURES_DEBUG} || $params->{debug} || 0,
               ignore_sql_errors => $params->{ignore_sql_errors},
               dumped_objects => {},
               use_create => $params->{use_create} || 0,
               config_attrs => $params->{config_attrs} || {},
+              schema_loader_extra_args => $params->{schema_loader_extra_args} || {},
               _all_tables=>{},
               _pk_autoincrement=>{},
               _table2class_map => {},
@@ -1260,7 +1261,7 @@ sub _generate_schema {
   $namespace_counter++;
   my $namespace2 = "DBIx::Class::Fixtures::GeneratedSchema_$namespace_counter";
   Class::C3::Componentised->inject_base( $namespace2 => $schema_class );
-  my $schema = $namespace2->connect(@{$connection_details});
+  my $schema = $namespace2->connection(@{$connection_details},{loader_options=>$self->schema_loader_extra_args});
 
   return $schema;
 }
@@ -1560,11 +1561,15 @@ sub populate {
     $fixup_visitor = new Data::Visitor::Callback(%callbacks);
   }
 
+  my @sources = $self->_get_sources_to_populate(
+        config_set=>$config_set,
+        sets_by_src=>\%sets_by_src,
+        schema=>$schema
+  );
   my $in_data = $self->_get_data_from_files($tmp_fixture_dir,$config_set,$schema);
-
   $schema->storage->txn_do(sub {
     $schema->storage->with_deferred_fk_checks(sub {
-      foreach my $source (sort $schema->sources) {
+      foreach my $source (@sources) {
         $self->msg("- adding " . $source);
 
         my $rs = $schema->resultset($source);
@@ -1603,6 +1608,7 @@ sub populate {
             push(@rows, $HASH1);
           }
         }
+
         $rs->populate(\@rows) if scalar(@rows);
 
         ## Now we need to do some db specific cleanup
@@ -1683,6 +1689,19 @@ sub _get_data_from_files {
       }
     }
     return $result;
+}
+
+sub _get_sources_to_populate{
+    my $self = shift;
+    my %opts=@_;
+
+    return sort $opts{schema}->sources if (
+        ! $opts{config}->{pk_autoincrement} ||
+        ! $opts{config}->{file_per_set} 
+    );
+
+    return (sort(keys(%{$opts{sets_by_src}})));
+
 }
 
 sub do_post_ddl {
