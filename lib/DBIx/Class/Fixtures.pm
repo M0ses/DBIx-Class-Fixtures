@@ -1573,10 +1573,6 @@ sub populate {
         $self->msg("- adding " . $source);
 
         my $rs = $schema->resultset($source);
-        #my $src = $rs->result_sourceschema->resultset($source);
-        #my $referenced_class = $rs->result_source->relationship_info($rel)->{class};
-        #next if ($self->_all_tables->{$referenced_class});
-        print $rs->result_source->result_class . "\n";
         next unless ($in_data->{$source});
         my @rows;
         foreach my $key (sort sort_pk_numeric keys(%{$in_data->{$source}})) {
